@@ -1,3 +1,13 @@
+/**
+ * ReportScreen.tsx (Citizen)
+ *
+ * Complete mobile reporting flow:
+ *   Camera / Gallery → Image Preview → GPS → Description → Review → Submit
+ *
+ * Submission is delegated to citizenObservationService which calls the FastAPI backend.
+ * The screen emits onSubmitted(result) so the navigator can transition to AnalysisScreen.
+ */
+
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,320 +20,318 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { detectRoadDefect, type DetectionResult } from '../services/devMock/detectionService';
 import { getDeviceLocation, manualLocation } from '../services/locationService';
-import { findBestDuplicate, type DuplicateMatch } from '../services/devMock/duplicateService';
-import { makeId } from '../services/devMock/defectService';
+import { submitObservation } from '../services/citizenObservationService';
 import { formatCoordinates } from '../utils/distance';
-import {
-  DEFECT_TYPE_LABELS,
-  SEVERITY_LABELS,
-  type Defect,
-  type DefectType,
-  type LocationFix,
-  type Observation,
-  type Severity,
-} from '../../api/types';
+import type { LocationFix } from '../../api/types';
+import type { ObservationResult } from '../types';
 
 interface Props {
-  defects: Defect[];
   onCancel: () => void;
-  /** mergeIntoId null → create a new defect record. */
-  onCommit: (observation: Observation, mergeIntoId: string | null) => void;
+  /** Called with the in-flight promise so AnalysisScreen can track it */
+  onSubmitting: (promise: Promise<ObservationResult>) => void;
 }
 
-interface Pending {
-  observation: Observation;
-  match: DuplicateMatch | null;
-}
+type Step = 'IMAGE' | 'LOCATION' | 'DESCRIPTION' | 'REVIEW';
 
-const DEFECT_TYPES = Object.keys(DEFECT_TYPE_LABELS) as DefectType[];
-const SEVERITIES = Object.keys(SEVERITY_LABELS) as Severity[];
-
-export default function ReportScreen({ defects, onCancel, onCommit }: Props) {
+export default function ReportScreen({ onCancel, onSubmitting }: Props) {
+  const [step, setStep] = useState<Step>('IMAGE');
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [detection, setDetection] = useState<DetectionResult | null>(null);
-  const [defectType, setDefectType] = useState<DefectType>('POTHOLE');
-  const [severity, setSeverity] = useState<Severity>('MEDIUM');
+  const [pickError, setPickError] = useState<string | null>(null);
   const [location, setLocation] = useState<LocationFix | null>(null);
   const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [manualLat, setManualLat] = useState('');
   const [manualLon, setManualLon] = useState('');
   const [manualError, setManualError] = useState<string | null>(null);
-  const [pickError, setPickError] = useState<string | null>(null);
-  const [pending, setPending] = useState<Pending | null>(null);
+  const [description, setDescription] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const requestLocation = async () => {
-    setLocating(true);
-    setLocation(await getDeviceLocation());
-    setLocating(false);
-  };
+  // Auto-request GPS on mount
+  useEffect(() => { requestLocation(); }, []);
 
-  useEffect(() => {
-    requestLocation();
-  }, []);
+  const hasFix =
+    location !== null &&
+    location.latitude !== null &&
+    location.longitude !== null &&
+    location.source !== 'UNLOCATED';
 
-  const handleImage = async (result: ImagePicker.ImagePickerResult) => {
+  // ── Image capture ──────────────────────────────────────────────────────────
+
+  const handleImageResult = (result: ImagePicker.ImagePickerResult) => {
     if (result.canceled || !result.assets?.length) return;
-    const uri = result.assets[0].uri;
-    setImageUri(uri);
-    setPending(null);
-    const d = await detectRoadDefect(uri);
-    setDetection(d);
-    if (d.source === 'MODEL') {
-      if (d.defectType) setDefectType(d.defectType);
-      if (d.severity) setSeverity(d.severity);
-    }
+    setImageUri(result.assets[0].uri);
+    setPickError(null);
+    setStep('LOCATION');
   };
 
   const pickFromGallery = async () => {
     setPickError(null);
-    handleImage(await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.7 }));
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.75,
+    });
+    handleImageResult(result);
   };
 
   const captureWithCamera = async () => {
     setPickError(null);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
-      setPickError('Camera permission denied — select from gallery instead.');
+      setPickError('Camera permission denied. Please select from gallery instead.');
       return;
     }
-    handleImage(await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.7 }));
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.75 });
+    handleImageResult(result);
+  };
+
+  // ── Location ───────────────────────────────────────────────────────────────
+
+  const requestLocation = async () => {
+    setLocating(true);
+    setLocationError(null);
+    const fix = await getDeviceLocation();
+    setLocation(fix);
+    if (fix.source === 'UNLOCATED') {
+      setLocationError(fix.error ?? 'Location unavailable.');
+    }
+    setLocating(false);
   };
 
   const applyManual = () => {
     const fix = manualLocation(manualLat, manualLon);
-    setManualError(fix.error ?? null);
-    if (fix.source === 'MANUAL') setLocation(fix);
+    if (fix.source === 'UNLOCATED') {
+      setManualError(fix.error ?? 'Invalid coordinates.');
+    } else {
+      setLocation(fix);
+      setManualError(null);
+    }
   };
 
-  const hasFix =
-    location !== null && location.latitude !== null && location.longitude !== null && location.source !== 'UNLOCATED';
-  const canCreate = imageUri !== null && hasFix;
+  // ── Submit ─────────────────────────────────────────────────────────────────
 
-  const createObservation = () => {
-    if (!imageUri || !location || location.latitude === null || location.longitude === null) return;
-    if (location.source === 'UNLOCATED') return;
-    const fromModel = detection?.source === 'MODEL';
-    const observation: Observation = {
-      id: makeId('OB'),
-      imageUri,
-      defectType,
-      severity,
-      confidence: fromModel ? detection.confidence : null,
-      classificationSource: fromModel ? 'MODEL' : 'REPORTER',
-      latitude: location.latitude,
-      longitude: location.longitude,
-      accuracyMeters: location.accuracyMeters,
-      locationSource: location.source,
-      timestamp: Date.now(),
-    };
-    setPending({ observation, match: findBestDuplicate(observation, defects) });
+  const handleSubmit = () => {
+    if (!imageUri || !location) return;
+    setSubmitting(true);
+    const promise = submitObservation(imageUri, location, description.trim() || undefined);
+    onSubmitting(promise);
   };
+
+  // ── Step navigation ────────────────────────────────────────────────────────
+
+  const canProceedToDescription = imageUri !== null && hasFix;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+    >
+      {/* Back */}
       <View style={styles.topRow}>
         <Pressable onPress={onCancel} hitSlop={12}>
-          <Text style={styles.link}>‹ Back</Text>
+          <Text style={styles.backLink}>‹ Cancel</Text>
         </Pressable>
       </View>
-      <Text style={styles.title}>Report Road Problem</Text>
+      <Text style={styles.screenTitle}>Report Road Problem</Text>
 
-      {/* 1. Image */}
-      <Text style={styles.section}>1 · Road image</Text>
+      {/* ── STEP 1: Image ─────────────────────────────────────────────────── */}
+      <SectionHeader number={1} title="Road image" />
       <View style={styles.card}>
-        {imageUri ? <Image source={{ uri: imageUri }} style={styles.preview} /> : null}
-        <View style={styles.buttonRow}>
-          <Button label="Choose from gallery" onPress={pickFromGallery} />
-          <Button label="Take photo" onPress={captureWithCamera} />
-        </View>
-        {pickError ? <Text style={styles.error}>{pickError}</Text> : null}
-      </View>
-
-      {/* 2. Detection / classification */}
-      <Text style={styles.section}>2 · Defect assessment</Text>
-      <View style={styles.card}>
-        {detection ? (
-          <View style={[styles.notice, detection.source === 'MODEL' ? styles.noticeOk : styles.noticeWarn]}>
-            <Text style={styles.noticeTitle}>
-              Detector: {detection.source === 'MODEL' ? 'MODEL' : 'UNAVAILABLE (demo mode)'}
-            </Text>
-            <Text style={styles.noticeText}>
-              {detection.message}
-              {detection.source === 'MODEL' && detection.confidence !== null
-                ? ` Confidence ${(detection.confidence * 100).toFixed(0)}%.`
-                : ''}
-              {detection.source === 'MODEL' && detection.isDefect === false
-                ? ' Model found no defect — confirm before submitting.'
-                : ''}
-            </Text>
-          </View>
+        {imageUri ? (
+          <>
+            <Image source={{ uri: imageUri }} style={styles.preview} />
+            <View style={styles.buttonRow}>
+              <StepButton label="Change photo" onPress={pickFromGallery} />
+              <StepButton label="Retake" onPress={captureWithCamera} />
+            </View>
+          </>
         ) : (
-          <Text style={styles.muted}>Add an image to run detection.</Text>
+          <>
+            <View style={styles.imagePlaceholder}>
+              <Text style={styles.imagePlaceholderText}>No image selected</Text>
+            </View>
+            <View style={styles.buttonRow}>
+              <StepButton label="Choose from gallery" onPress={pickFromGallery} />
+              <StepButton label="Take photo" onPress={captureWithCamera} />
+            </View>
+          </>
         )}
-        <Text style={styles.label}>Defect type</Text>
-        <View style={styles.chips}>
-          {DEFECT_TYPES.map((t) => (
-            <Chip key={t} label={DEFECT_TYPE_LABELS[t]} selected={defectType === t} onPress={() => setDefectType(t)} />
-          ))}
-        </View>
-        <Text style={styles.label}>Severity</Text>
-        <View style={styles.chips}>
-          {SEVERITIES.map((s) => (
-            <Chip key={s} label={SEVERITY_LABELS[s]} selected={severity === s} onPress={() => setSeverity(s)} />
-          ))}
-        </View>
+        {pickError ? <Text style={styles.errorText}>{pickError}</Text> : null}
       </View>
 
-      {/* 3. Location */}
-      <Text style={styles.section}>3 · Location</Text>
+      {/* ── STEP 2: Location ──────────────────────────────────────────────── */}
+      <SectionHeader number={2} title="Location" />
       <View style={styles.card}>
         {locating ? (
-          <View style={styles.inline}>
-            <ActivityIndicator />
-            <Text style={styles.muted}>Getting device location…</Text>
+          <View style={styles.inlineRow}>
+            <ActivityIndicator color="#1D4ED8" />
+            <Text style={styles.mutedText}>Getting device location…</Text>
           </View>
         ) : hasFix && location ? (
-          <View>
-            <Text style={styles.value}>{formatCoordinates(location.latitude!, location.longitude!)}</Text>
-            <Text style={styles.muted}>
-              Source: {location.source} · Accuracy:{' '}
-              {location.accuracyMeters !== null ? `±${location.accuracyMeters.toFixed(0)} m` : 'unknown'}
-            </Text>
+          <View style={styles.locationSuccess}>
+            <View style={styles.locationDot} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.locationCoords}>
+                {formatCoordinates(location.latitude!, location.longitude!)}
+              </Text>
+              <Text style={styles.locationMeta}>
+                Source: {location.source}
+                {location.accuracyMeters !== null
+                  ? ` · Accuracy ±${location.accuracyMeters.toFixed(0)} m`
+                  : ''}
+              </Text>
+            </View>
           </View>
         ) : (
-          <Text style={styles.error}>{location?.error ?? 'No location yet.'} Observation is UNLOCATED.</Text>
+          <View>
+            {locationError ? (
+              <Text style={styles.errorText}>{locationError}</Text>
+            ) : (
+              <Text style={styles.mutedText}>No location yet.</Text>
+            )}
+          </View>
         )}
-        <Button label="Use device location" onPress={requestLocation} disabled={locating} />
 
-        <Text style={styles.label}>Manual fallback</Text>
+        <StepButton label="Refresh location" onPress={requestLocation} disabled={locating} />
+
+        <View style={styles.divider} />
+        <Text style={styles.label}>Manual coordinates (fallback)</Text>
         <View style={styles.buttonRow}>
           <TextInput
-            style={styles.input}
+            style={styles.coordInput}
             placeholder="Latitude"
+            placeholderTextColor="#9AA5B1"
             keyboardType="numbers-and-punctuation"
             value={manualLat}
             onChangeText={setManualLat}
           />
           <TextInput
-            style={styles.input}
+            style={styles.coordInput}
             placeholder="Longitude"
+            placeholderTextColor="#9AA5B1"
             keyboardType="numbers-and-punctuation"
             value={manualLon}
             onChangeText={setManualLon}
           />
         </View>
-        {manualError ? <Text style={styles.error}>{manualError}</Text> : null}
-        <Button label="Set manual location" onPress={applyManual} />
+        {manualError ? <Text style={styles.errorText}>{manualError}</Text> : null}
+        <StepButton label="Apply manual coordinates" onPress={applyManual} />
       </View>
 
-      {/* 4. Create observation + duplicate check */}
-      {!pending ? (
-        <>
-          <Button label="Create Observation" onPress={createObservation} disabled={!canCreate} primary />
-          {!canCreate ? (
-            <Text style={styles.hint}>An image and a location are required.</Text>
-          ) : null}
-        </>
-      ) : (
-        <DuplicatePanel
-          pending={pending}
-          onCommit={(mergeIntoId) => onCommit(pending.observation, mergeIntoId)}
-          onEdit={() => setPending(null)}
+      {/* ── STEP 3: Description (optional) ───────────────────────────────── */}
+      <SectionHeader number={3} title="Description (optional)" />
+      <View style={styles.card}>
+        <TextInput
+          style={styles.descInput}
+          placeholder="Describe what you observed, e.g. 'Large pothole near bus stop'"
+          placeholderTextColor="#9AA5B1"
+          multiline
+          maxLength={500}
+          value={description}
+          onChangeText={setDescription}
         />
-      )}
+        <Text style={styles.charCount}>{description.length}/500</Text>
+      </View>
+
+      {/* ── STEP 4: Review & Submit ───────────────────────────────────────── */}
+      <SectionHeader number={4} title="Review & submit" />
+      <View style={styles.card}>
+        <ReviewRow label="Image" value={imageUri ? '✓ Image selected' : '✗ No image'} ok={!!imageUri} />
+        <ReviewRow
+          label="Location"
+          value={
+            hasFix && location
+              ? `✓ ${formatCoordinates(location.latitude!, location.longitude!)}`
+              : '✗ No valid location'
+          }
+          ok={hasFix}
+        />
+        {description.trim() ? (
+          <ReviewRow label="Description" value={description.trim()} ok={true} />
+        ) : null}
+
+        {!canProceedToDescription ? (
+          <Text style={styles.hint}>
+            {!imageUri ? 'An image is required. ' : ''}
+            {!hasFix ? 'A valid location is required.' : ''}
+          </Text>
+        ) : null}
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.submitButton,
+            !canProceedToDescription && styles.submitDisabled,
+            pressed && canProceedToDescription && { opacity: 0.85 },
+          ]}
+          onPress={handleSubmit}
+          disabled={!canProceedToDescription || submitting}
+        >
+          {submitting ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.submitText}>Submit Observation</Text>
+          )}
+        </Pressable>
+      </View>
     </ScrollView>
   );
 }
 
-function DuplicatePanel({
-  pending,
-  onCommit,
-  onEdit,
-}: {
-  pending: Pending;
-  onCommit: (mergeIntoId: string | null) => void;
-  onEdit: () => void;
-}) {
-  const { match } = pending;
+// ── Small internal components ─────────────────────────────────────────────────
+
+function SectionHeader({ number, title }: { number: number; title: string }) {
   return (
-    <View style={styles.card}>
-      <Text style={styles.section}>Duplicate check</Text>
-      {match ? (
-        <>
-          <Text style={styles.value}>
-            {match.analysis.decision} · score {match.analysis.score.toFixed(2)} · {match.analysis.distanceMeters.toFixed(1)} m
-            from {match.defect.id}
-          </Text>
-          {match.analysis.reasons.map((r) => (
-            <Text key={r} style={styles.reason}>• {r}</Text>
-          ))}
-          {match.analysis.decision === 'REVIEW' ? (
-            <Text style={styles.hint}>Evidence is inconclusive — reporter decides.</Text>
-          ) : null}
-          <Button
-            label={`Add as evidence to ${match.defect.id}`}
-            onPress={() => onCommit(match.defect.id)}
-            primary={match.analysis.decision === 'MERGE'}
-          />
-          <Button label="Create separate defect record" onPress={() => onCommit(null)} />
-        </>
-      ) : (
-        <>
-          <Text style={styles.muted}>No existing defect within the candidate gate — DISTINCT.</Text>
-          <Button label="Create Defect Record" onPress={() => onCommit(null)} primary />
-        </>
-      )}
-      <Pressable onPress={onEdit} hitSlop={8}>
-        <Text style={[styles.link, { textAlign: 'center', marginTop: 4 }]}>Edit observation</Text>
-      </Pressable>
-    </View>
+    <Text style={styles.sectionHeader}>
+      <Text style={styles.sectionNumber}>{number} · </Text>
+      {title}
+    </Text>
   );
 }
 
-function Button({
+function StepButton({
   label,
   onPress,
   disabled,
-  primary,
 }: {
   label: string;
   onPress: () => void;
   disabled?: boolean;
-  primary?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       style={({ pressed }) => [
-        styles.button,
-        primary && styles.buttonPrimary,
-        disabled && styles.buttonDisabled,
-        pressed && { opacity: 0.8 },
+        styles.stepButton,
+        disabled && styles.stepButtonDisabled,
+        pressed && !disabled && { opacity: 0.8 },
       ]}
     >
-      <Text style={[styles.buttonText, primary && styles.buttonTextPrimary]}>{label}</Text>
+      <Text style={styles.stepButtonText}>{label}</Text>
     </Pressable>
   );
 }
 
-function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+function ReviewRow({ label, value, ok }: { label: string; value: string; ok: boolean }) {
   return (
-    <Pressable onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}>
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
-    </Pressable>
+    <View style={styles.reviewRow}>
+      <Text style={styles.reviewLabel}>{label}</Text>
+      <Text style={[styles.reviewValue, ok ? styles.reviewOk : styles.reviewBad]}>{value}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F6F8' },
-  content: { padding: 16, paddingBottom: 40, gap: 10 },
+  content: { padding: 16, paddingBottom: 48, gap: 8 },
   topRow: { flexDirection: 'row' },
-  link: { color: '#1D4ED8', fontSize: 15, fontWeight: '600' },
-  title: { fontSize: 24, fontWeight: '700', color: '#101828', marginBottom: 4 },
-  section: { fontSize: 14, fontWeight: '600', color: '#344054', marginTop: 8 },
+  backLink: { color: '#1D4ED8', fontSize: 15, fontWeight: '600' },
+  screenTitle: { fontSize: 24, fontWeight: '700', color: '#101828', marginBottom: 8 },
+
+  sectionHeader: { fontSize: 13, color: '#475467', marginTop: 10 },
+  sectionNumber: { fontWeight: '700', color: '#344054' },
+
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -333,45 +341,42 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   preview: { width: '100%', aspectRatio: 4 / 3, borderRadius: 8, backgroundColor: '#EEF0F3' },
+  imagePlaceholder: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    borderRadius: 8,
+    backgroundColor: '#EEF0F3',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imagePlaceholderText: { fontSize: 14, color: '#9AA5B1' },
   buttonRow: { flexDirection: 'row', gap: 10 },
-  button: {
-    flexGrow: 1,
+  stepButton: {
+    flex: 1,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#D0D5DD',
     backgroundColor: '#FFFFFF',
     paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     alignItems: 'center',
   },
-  buttonPrimary: { backgroundColor: '#1D4ED8', borderColor: '#1D4ED8', paddingVertical: 15 },
-  buttonDisabled: { opacity: 0.4 },
-  buttonText: { fontSize: 15, fontWeight: '600', color: '#344054' },
-  buttonTextPrimary: { color: '#FFFFFF', fontSize: 16 },
-  notice: { borderRadius: 8, padding: 10, gap: 2 },
-  noticeOk: { backgroundColor: '#E3F4EA' },
-  noticeWarn: { backgroundColor: '#FEF6D8' },
-  noticeTitle: { fontSize: 13, fontWeight: '700', color: '#101828' },
-  noticeText: { fontSize: 13, color: '#344054' },
-  label: { fontSize: 13, fontWeight: '600', color: '#475467' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#D0D5DD',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  stepButtonDisabled: { opacity: 0.4 },
+  stepButtonText: { fontSize: 14, fontWeight: '600', color: '#344054' },
+
+  inlineRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  locationSuccess: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  locationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#18794E',
   },
-  chipSelected: { backgroundColor: '#1D4ED8', borderColor: '#1D4ED8' },
-  chipText: { fontSize: 13, color: '#344054' },
-  chipTextSelected: { color: '#FFFFFF', fontWeight: '600' },
-  inline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  value: { fontSize: 15, fontWeight: '600', color: '#101828', fontVariant: ['tabular-nums'] },
-  muted: { fontSize: 13, color: '#667085' },
-  error: { fontSize: 13, color: '#B42318' },
-  hint: { fontSize: 13, color: '#667085', textAlign: 'center' },
-  reason: { fontSize: 13, color: '#475467' },
-  input: {
+  locationCoords: { fontSize: 14, fontWeight: '600', color: '#101828', fontVariant: ['tabular-nums'] },
+  locationMeta: { fontSize: 12, color: '#667085', marginTop: 2 },
+  divider: { height: 1, backgroundColor: '#E4E7EC' },
+  label: { fontSize: 13, fontWeight: '600', color: '#475467' },
+  coordInput: {
     flex: 1,
     borderWidth: 1,
     borderColor: '#D0D5DD',
@@ -381,4 +386,36 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#101828',
   },
+  descInput: {
+    borderWidth: 1,
+    borderColor: '#D0D5DD',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#101828',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  charCount: { fontSize: 11, color: '#9AA5B1', textAlign: 'right' },
+
+  reviewRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+  reviewLabel: { fontSize: 13, fontWeight: '600', color: '#475467', width: 80 },
+  reviewValue: { flex: 1, fontSize: 13 },
+  reviewOk: { color: '#18794E' },
+  reviewBad: { color: '#B42318' },
+
+  hint: { fontSize: 13, color: '#667085', textAlign: 'center' },
+
+  submitButton: {
+    backgroundColor: '#1D4ED8',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  submitDisabled: { opacity: 0.4 },
+  submitText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+
+  errorText: { fontSize: 13, color: '#B42318' },
+  mutedText: { fontSize: 13, color: '#667085' },
 });
