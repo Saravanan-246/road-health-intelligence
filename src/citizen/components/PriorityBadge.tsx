@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { priorityTier } from '../services/priorityService';
-import type { PriorityTier } from '../types/defect';
+import { priorityTier } from '../services/devMock/priorityService';
+import type { PriorityTier } from '../../api/types';
 
 const TIER_COLORS: Record<PriorityTier, { bg: string; fg: string }> = {
   Critical: { bg: '#FDE7E6', fg: '#B42318' },

@@ -1,7 +1,7 @@
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import DefectCard from '../components/DefectCard';
-import { PRIORITY_CONFIG } from '../services/priorityService';
-import type { Defect } from '../types/defect';
+import { PRIORITY_CONFIG } from '../services/devMock/priorityService';
+import type { Defect } from '../../api/types';
 
 interface Props {
   defects: Defect[];

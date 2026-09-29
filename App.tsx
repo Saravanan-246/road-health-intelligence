@@ -1,98 +1,49 @@
-import { useCallback, useReducer } from 'react';
-import { SafeAreaView, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import HomeScreen from './src/screens/HomeScreen';
-import ReportScreen from './src/screens/ReportScreen';
-import DefectScreen from './src/screens/DefectScreen';
-import { addObservation, createDefect } from './src/services/defectService';
-import type { Defect, Observation } from './src/types/defect';
+import CitizenNavigator from './src/navigation/CitizenNavigator';
+import AdminNavigator from './src/navigation/AdminNavigator';
 
-type Screen = 'HOME' | 'REPORT' | { kind: 'DEFECT'; id: string };
+type Role = 'CITIZEN' | 'ADMIN';
 
-interface State {
-  screen: Screen;
-  defects: Defect[];
-}
-
-type Action =
-  | { type: 'GO_HOME' }
-  | { type: 'GO_REPORT' }
-  | { type: 'GO_DEFECT'; id: string }
-  | { type: 'CREATE_OBSERVATION'; observation: Observation; mergeIntoId: string | null };
-
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case 'GO_HOME':
-      return { ...state, screen: 'HOME' };
-    case 'GO_REPORT':
-      return { ...state, screen: 'REPORT' };
-    case 'GO_DEFECT':
-      return { ...state, screen: { kind: 'DEFECT', id: action.id } };
-    case 'CREATE_OBSERVATION': {
-      const now = Date.now();
-      let defects = state.defects;
-
-      if (action.mergeIntoId) {
-        const idx = defects.findIndex((d) => d.id === action.mergeIntoId);
-        if (idx >= 0) {
-          const updated = addObservation(defects[idx], action.observation, now);
-          defects = [...defects];
-          defects[idx] = updated;
-        }
-      } else {
-        defects = [...defects, createDefect(action.observation, now)];
-      }
-
-      return { ...state, screen: 'HOME', defects };
-    }
-    default:
-      return state;
-  }
-}
-
+/**
+ * Root: picks which independent experience to mount.
+ * TEMPORARY role picker until src/auth/citizen and src/auth/admin logins exist.
+ */
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, {
-    screen: 'HOME',
-    defects: [],
-  });
-
-  const handleCommit = useCallback((observation: Observation, mergeIntoId: string | null) => {
-    dispatch({ type: 'CREATE_OBSERVATION', observation, mergeIntoId });
-  }, []);
+  const [role, setRole] = useState<Role | null>(null);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar style="dark" />
-      <View style={styles.container}>
-        {state.screen === 'HOME' && (
-          <HomeScreen
-            defects={state.defects}
-            onReport={() => dispatch({ type: 'GO_REPORT' })}
-            onOpenDefect={(id) => dispatch({ type: 'GO_DEFECT', id })}
-          />
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safe}>
+        <StatusBar style="dark" />
+        {role === 'CITIZEN' ? (
+          <CitizenNavigator />
+        ) : role === 'ADMIN' ? (
+          <AdminNavigator />
+        ) : (
+          <View style={styles.picker}>
+            <Text style={styles.title}>Road Health Intelligence</Text>
+            <Pressable style={styles.button} onPress={() => setRole('CITIZEN')}>
+              <Text style={styles.buttonText}>Continue as Citizen</Text>
+            </Pressable>
+            <Pressable style={[styles.button, styles.secondary]} onPress={() => setRole('ADMIN')}>
+              <Text style={[styles.buttonText, styles.secondaryText]}>Continue as Admin</Text>
+            </Pressable>
+          </View>
         )}
-        {state.screen === 'REPORT' && (
-          <ReportScreen
-            defects={state.defects}
-            onCancel={() => dispatch({ type: 'GO_HOME' })}
-            onCommit={handleCommit}
-          />
-        )}
-        {typeof state.screen === 'object' && state.screen.kind === 'DEFECT' && (() => {
-          const defect = state.defects.find((d) => d.id === (state.screen as { kind: 'DEFECT'; id: string }).id);
-          return defect ? (
-            <DefectScreen
-              defect={defect}
-              onBack={() => dispatch({ type: 'GO_HOME' })}
-            />
-          ) : null;
-        })()}
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F5F6F8' },
-  container: { flex: 1 },
+  picker: { flex: 1, justifyContent: 'center', padding: 16, gap: 12 },
+  title: { fontSize: 26, fontWeight: '700', color: '#101828', marginBottom: 12 },
+  button: { backgroundColor: '#1D4ED8', borderRadius: 12, paddingVertical: 16, alignItems: 'center' },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  secondary: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D0D5DD' },
+  secondaryText: { color: '#344054' },
 });

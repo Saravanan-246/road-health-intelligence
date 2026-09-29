@@ -10,10 +10,10 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { detectRoadDefect, type DetectionResult } from '../services/detectionService';
+import { detectRoadDefect, type DetectionResult } from '../services/devMock/detectionService';
 import { getDeviceLocation, manualLocation } from '../services/locationService';
-import { findBestDuplicate, type DuplicateMatch } from '../services/duplicateService';
-import { makeId } from '../services/defectService';
+import { findBestDuplicate, type DuplicateMatch } from '../services/devMock/duplicateService';
+import { makeId } from '../services/devMock/defectService';
 import { formatCoordinates } from '../utils/distance';
 import {
   DEFECT_TYPE_LABELS,
@@ -23,7 +23,7 @@ import {
   type LocationFix,
   type Observation,
   type Severity,
-} from '../types/defect';
+} from '../../api/types';
 
 interface Props {
   defects: Defect[];

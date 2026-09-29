@@ -1,4 +1,4 @@
-import type { Defect, DefectStatus, Observation } from '../types/defect';
+import type { Defect, DefectStatus, Observation } from '../../../api/types';
 import { calculatePriority } from './priorityService';
 
 export function makeId(prefix: string): string {

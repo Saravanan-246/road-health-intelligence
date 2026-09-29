@@ -1,5 +1,5 @@
-import type { Defect, DuplicateAnalysis, DuplicateDecision, Observation } from '../types/defect';
-import { haversineMeters } from '../utils/distance';
+import type { Defect, DuplicateAnalysis, DuplicateDecision, Observation } from '../../../api/types';
+import { haversineMeters } from '../../utils/distance';
 
 /**
  * All duplicate-analysis thresholds live here.

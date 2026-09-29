@@ -5,7 +5,7 @@ import type {
   PriorityResult,
   PriorityTier,
   Severity,
-} from '../types/defect';
+} from '../../../api/types';
 
 /**
  * Engineering parameters, not learned from repair data.

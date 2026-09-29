@@ -1,4 +1,4 @@
-import type { DefectType, Severity } from '../types/defect';
+import type { DefectType, Severity } from '../../../api/types';
 
 export type DetectionSource = 'MODEL' | 'UNAVAILABLE';
 

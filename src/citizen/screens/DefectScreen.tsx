@@ -6,7 +6,7 @@ import {
   SEVERITY_LABELS,
   type Defect,
   type PriorityBreakdown,
-} from '../types/defect';
+} from '../../api/types';
 
 interface Props {
   defect: Defect;

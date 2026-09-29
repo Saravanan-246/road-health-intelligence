@@ -1,6 +1,6 @@
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import PriorityBadge from './PriorityBadge';
-import { DEFECT_TYPE_LABELS, type Defect } from '../types/defect';
+import { DEFECT_TYPE_LABELS, type Defect } from '../../api/types';
 import { formatCoordinates } from '../utils/distance';
 
 interface Props {

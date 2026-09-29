@@ -1,5 +1,5 @@
 import * as Location from 'expo-location';
-import type { LocationFix } from '../types/defect';
+import type { LocationFix } from '../../api/types';
 
 const UNLOCATED: LocationFix = {
   latitude: null,
