@@ -20,6 +20,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "RoadGuard reads motion sensors only on the sensor calibration screen to show orientation-normalised readings. Readings are not stored or attached to reports."
+        }
+      ]
+    ]
   }
 }

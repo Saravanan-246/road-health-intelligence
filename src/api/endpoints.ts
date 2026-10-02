@@ -1,6 +1,7 @@
 /** Backend endpoint paths. Must match backend/ routes (team/contracts/api.contract.md). */
 export const ENDPOINTS = {
   health: '/health',
+  validateImage: '/api/detection/validate-image',
   login: '/auth/login',
   observations: '/observations',
   myObservations: '/observations/my',

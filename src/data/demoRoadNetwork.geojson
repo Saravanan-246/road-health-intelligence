@@ -1,0 +1,90 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "way_id": "OSM-001",
+        "way_name": "Avenida Principal",
+        "oneway": false,
+        "lanes": 2
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [76.9540, 11.0150],
+          [76.9550, 11.0160],
+          [76.9560, 11.0170]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "way_id": "OSM-002",
+        "way_name": "Perpendicular Cross",
+        "oneway": false,
+        "lanes": 2
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [76.9545, 11.0140],
+          [76.9555, 11.0180]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "way_id": "OSM-003",
+        "way_name": "Service Road North",
+        "oneway": false,
+        "lanes": 1
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [76.9530, 11.0180],
+          [76.9580, 11.0200]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "way_id": "OSM-004",
+        "way_name": "Dual Carriageway A",
+        "oneway": true,
+        "lanes": 3
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [76.9500, 11.0130],
+          [76.9510, 11.0140],
+          [76.9520, 11.0150],
+          [76.9530, 11.0160]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "way_id": "OSM-005",
+        "way_name": "Dual Carriageway B (opposite)",
+        "oneway": true,
+        "lanes": 3
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [76.9530, 11.0160],
+          [76.9520, 11.0150],
+          [76.9510, 11.0140],
+          [76.9500, 11.0130]
+        ]
+      }
+    }
+  ]
+}

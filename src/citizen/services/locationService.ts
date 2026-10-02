@@ -8,6 +8,9 @@ const UNLOCATED: LocationFix = {
   source: 'UNLOCATED',
 };
 
+/** Indoors a GPS fix can take minutes; give up rather than spin forever. */
+const GPS_TIMEOUT_MS = 20_000;
+
 /** Foreground GPS fix. Never fabricates coordinates: failures return UNLOCATED. */
 export async function getDeviceLocation(): Promise<LocationFix> {
   try {
@@ -15,9 +18,13 @@ export async function getDeviceLocation(): Promise<LocationFix> {
     if (status !== 'granted') {
       return { ...UNLOCATED, error: 'Location permission denied' };
     }
-    const position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const position = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Timed out waiting for a GPS fix')), GPS_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
     return {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
